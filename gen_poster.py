@@ -1,179 +1,204 @@
 #!/usr/bin/env python3
-"""Generate the travel poster for LUMARIS, a place that isn't there.
+"""Draw the LUMARIS travel poster (1024x1024 PNG) for the make.fun bounty.
 
-Deterministic: fixed palette, fixed geometry, fixed seeded stars.
-Writes entry.png (1024x1024) next to this script. Pillow only, no network.
+LUMARIS is an invented place: a dusk bay whose lagoon glows turquoise, a
+striped lighthouse on the right cliff sweeping its beam across the sunset,
+white cliff-houses on the left headland, lantern-lit sailboats, and the
+name set large in the sky.
+
+Deterministic: every coordinate, colour and random draw is fixed or seeded,
+so repeated runs produce identical bytes. Pillow only, no network.
+Run:  python3 gen_poster.py   -> writes entry.png beside this file.
 """
 import random
+
 from PIL import Image, ImageDraw, ImageFont
 
-W = H = 1024
-SERIF_B = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-SANS_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+SIZE = 1024
+FONT_SERIF = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
+FONT_SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT_SANS_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-CREAM = (255, 244, 214)
-INK = (24, 28, 54)
-
-
-def lerp(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+CREAM = (255, 243, 210)
+NIGHT = (18, 22, 48)
+CORAL = (216, 98, 68)
 
 
-def vgrad(draw, y0, y1, c0, c1):
-    for y in range(y0, y1):
-        t = (y - y0) / max(1, y1 - y0 - 1)
-        draw.line([(0, y), (W, y)], fill=lerp(c0, c1, t))
+def blend(c1, c2, t):
+    """Linear blend between two RGB triples."""
+    return tuple(round(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 
-def text_center(draw, cx, y, s, font, fill, spacing=0):
-    if spacing:
-        widths = [draw.textlength(ch, font=font) for ch in s]
-        total = sum(widths) + spacing * (len(s) - 1)
+def band(d, top, bottom, c_top, c_bottom):
+    """Fill horizontal band [top, bottom) with a vertical gradient."""
+    span = max(1, bottom - top - 1)
+    for y in range(top, bottom):
+        d.line([(0, y), (SIZE, y)], fill=blend(c_top, c_bottom, (y - top) / span))
+
+
+def centred(d, cx, y, text, font, fill, tracking=0):
+    """Draw text centred on cx; tracking adds extra space between letters."""
+    if tracking:
+        widths = [d.textlength(ch, font=font) for ch in text]
+        total = sum(widths) + tracking * (len(text) - 1)
         x = cx - total / 2
-        for ch, w in zip(s, widths):
-            draw.text((x, y), ch, font=font, fill=fill)
-            x += w + spacing
-        return total
-    w = draw.textlength(s, font=font)
-    draw.text((cx - w / 2, y), s, font=font, fill=fill)
-    return w
+        for ch, w in zip(text, widths):
+            d.text((x, y), ch, font=font, fill=fill)
+            x += w + tracking
+        return
+    w = d.textlength(text, font=font)
+    d.text((cx - w / 2, y), text, font=font, fill=fill)
+
+
+def halo(d, cx, cy, radius, colour, alpha, steps=5):
+    """Soft radial halo: concentric translucent discs, faintest outside."""
+    for i in range(steps, 0, -1):
+        r = radius * i / steps
+        d.ellipse([cx - r, cy - r, cx + r, cy + r],
+                  fill=colour + (alpha // steps,))
+
+
+def cliff_house(d, x, y, w, h):
+    """One white cliff-house with a coral roof and a lit window."""
+    d.rectangle([x, y, x + w, y + h], fill=(246, 238, 216))
+    d.polygon([(x - 2, y), (x + w / 2, y - 10), (x + w + 2, y)],
+              fill=CORAL)
+    d.rectangle([x + w / 2 - 2, y + h / 2, x + w / 2 + 2, y + h / 2 + 6],
+                fill=(255, 214, 110))
+
+
+def sailboat(d, bx, by, scale, hull=NIGHT):
+    """A small sailboat with cream sails and a glowing lantern."""
+    s = scale
+    d.polygon([(bx - 36 * s, by), (bx + 36 * s, by),
+               (bx + 24 * s, by + 15 * s), (bx - 24 * s, by + 15 * s)], fill=hull)
+    d.line([(bx, by), (bx, by - 54 * s)], fill=hull, width=max(2, int(3 * s)))
+    d.polygon([(bx + 4, by - 52 * s), (bx + 4, by - 7 * s),
+               (bx + 36 * s, by - 7 * s)], fill=CREAM)
+    d.polygon([(bx - 4, by - 46 * s), (bx - 4, by - 7 * s),
+               (bx - 28 * s, by - 7 * s)], fill=(244, 200, 158))
+    halo(d, bx, by - 16 * s, 14 * s, (255, 214, 110), 90, steps=3)
+    d.ellipse([bx - 5 * s, by - 21 * s, bx + 5 * s, by - 11 * s],
+              fill=(255, 216, 112))
 
 
 def main():
-    img = Image.new("RGB", (W, H), INK)
+    img = Image.new("RGB", (SIZE, SIZE), NIGHT)
     d = ImageDraw.Draw(img, "RGBA")
-
-    # ---- sky: indigo dusk -> violet -> coral band at the horizon ----
-    vgrad(d, 0, 330, (22, 26, 62), (74, 52, 104))
-    vgrad(d, 330, 520, (74, 52, 104), (238, 122, 82))
-    vgrad(d, 520, 560, (238, 122, 82), (255, 176, 110))
-
-    # ---- stars, upper sky only (seeded, deterministic) ----
     rng = random.Random(20261121)
-    for _ in range(140):
-        x = rng.randint(20, W - 20)
-        y = rng.randint(24, 300)
+
+    # -- Sky: deep indigo at the top, violet, then a coral sunset band. --
+    band(d, 0, 320, (20, 24, 60), (72, 50, 102))
+    band(d, 320, 510, (72, 50, 102), (236, 120, 80))
+    band(d, 510, 556, (236, 120, 80), (255, 178, 112))
+
+    # Stars in the upper sky only.
+    for _ in range(150):
+        x = rng.randint(24, SIZE - 24)
+        y = rng.randint(26, 290)
         r = rng.choice([1, 1, 1, 2])
-        a = rng.randint(90, 220)
-        d.ellipse([x - r, y - r, x + r, y + r], fill=(255, 244, 214, a))
+        a = rng.randint(90, 215)
+        d.ellipse([x - r, y - r, x + r, y + r], fill=CREAM + (a,))
 
-    # ---- low sun, big and warm, just above the horizon ----
-    sx, sy, sr = 512, 500, 92
-    for r, a in [(210, 26), (170, 40), (135, 60)]:
-        d.ellipse([sx - r, sy - r, sx + r, sy + r], fill=(255, 190, 110, a))
-    d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 214, 140))
+    # Low sun, just above the horizon, with a warm halo.
+    sun_x, sun_y, sun_r = 512, 498, 90
+    halo(d, sun_x, sun_y, 215, (255, 190, 110), 110)
+    d.ellipse([sun_x - sun_r, sun_y - sun_r, sun_x + sun_r, sun_y + sun_r],
+              fill=(255, 216, 142))
 
-    # ---- sea: glowing turquoise at the horizon, deep teal below ----
-    vgrad(d, 560, 1024, (64, 190, 178), (10, 52, 74))
+    # -- Sea: glowing turquoise at the horizon, deep teal below. --
+    band(d, 556, SIZE, (66, 192, 180), (9, 50, 72))
 
-    # sun reflection column on the water
-    for i in range(46):
-        y = 566 + i * 9
-        half = 26 + 130 * (i / 45) * rng.uniform(0.55, 1.0) if False else 26 + 130 * (i / 45)
-        wob = rng.uniform(-14, 14)
-        d.line([(sx - half + wob, y), (sx + half + wob, y)],
-               fill=(255, 205, 130, max(18, 150 - i * 3)), width=3)
+    # Sun glint: a widening column of warm dashes down the water.
+    for i in range(48):
+        y = 564 + i * 9
+        half = 24 + 135 * (i / 47)
+        wobble = rng.uniform(-13, 13)
+        fade = max(16, 148 - i * 3)
+        d.line([(sun_x - half + wobble, y), (sun_x + half + wobble, y)],
+               fill=(255, 206, 132, fade), width=3)
 
-    # glow shimmer streaks across the bay
-    for _ in range(90):
-        x = rng.randint(60, W - 60)
-        y = rng.randint(580, 880)
-        ln = rng.randint(18, 90)
-        a = rng.randint(40, 130)
-        d.line([(x, y), (x + ln, y)], fill=(140, 240, 220, a), width=2)
+    # Turquoise shimmer streaks across the bay.
+    for _ in range(95):
+        x = rng.randint(60, SIZE - 60)
+        y = rng.randint(578, 880)
+        ln = rng.randint(18, 92)
+        a = rng.randint(40, 128)
+        d.line([(x, y), (x + ln, y)], fill=(142, 240, 220, a), width=2)
 
-    # ---- distant headland silhouette across the bay ----
-    d.polygon([(0, 560), (150, 520), (300, 548), (430, 530), (560, 556),
-               (700, 528), (860, 552), (1024, 532), (1024, 560), (0, 560)],
-              fill=(38, 44, 86))
+    # Distant headland silhouette across the bay.
+    d.polygon([(0, 556), (140, 518), (290, 546), (430, 528), (560, 554),
+               (700, 526), (860, 550), (SIZE, 530), (SIZE, 556), (0, 556)],
+              fill=(36, 42, 84))
 
-    # ---- left cliff with a white cliff-town ----
-    d.polygon([(0, 560), (0, 1024), (150, 1024), (210, 760), (180, 640),
-               (120, 580), (40, 560)], fill=(16, 20, 44))
-    # little white houses stacked on the cliff
-    rng2 = random.Random(7)
-    for _ in range(14):
-        hx = rng2.randint(8, 120)
-        hy = rng2.randint(600, 780)
-        hw, hh = rng2.randint(16, 30), rng2.randint(14, 24)
-        d.rectangle([hx, hy, hx + hw, hy + hh], fill=(244, 236, 214))
-        d.polygon([(hx, hy), (hx + hw / 2, hy - 9), (hx + hw, hy)],
-                  fill=(214, 96, 66))
-        d.rectangle([hx + hw / 2 - 2, hy + hh / 2, hx + hw / 2 + 2, hy + hh / 2 + 5],
-                    fill=(255, 214, 110))
+    # -- Left cliff with the white cliff-town. --
+    d.polygon([(0, 556), (0, SIZE), (148, SIZE), (208, 762), (178, 638),
+               (118, 578), (38, 556)], fill=(15, 19, 42))
+    town = random.Random(11)
+    for _ in range(15):
+        hx = town.randint(38, 128)
+        hy = town.randint(598, 782)
+        hw = town.randint(16, 30)
+        hh = town.randint(14, 24)
+        cliff_house(d, hx, hy, hw, hh)
 
-    # ---- right cliff with the lighthouse (the landmark) ----
-    d.polygon([(1024, 560), (1024, 1024), (880, 1024), (830, 760), (860, 640),
-               (920, 580), (990, 560)], fill=(16, 20, 44))
-    # lighthouse tower, slightly tapered, cream with coral bands
-    lx = 905
-    d.polygon([(lx - 26, 640), (lx + 26, 640), (lx + 16, 470), (lx - 16, 470)],
+    # -- Right cliff and the lighthouse, the poster's landmark. --
+    d.polygon([(SIZE, 556), (SIZE, SIZE), (878, SIZE), (828, 762),
+               (858, 638), (918, 578), (988, 556)], fill=(15, 19, 42))
+    lx = 906
+    # Tapered tower, cream with two coral bands.
+    d.polygon([(lx - 27, 640), (lx + 27, 640), (lx + 17, 468), (lx - 17, 468)],
               fill=(250, 240, 214))
-    d.polygon([(lx - 23, 600), (lx + 23, 600), (lx + 21, 575), (lx - 21, 575)],
-              fill=(214, 96, 66))
-    d.polygon([(lx - 19, 540), (lx + 19, 540), (lx + 17, 515), (lx - 17, 515)],
-              fill=(214, 96, 66))
-    # gallery + lamp room + dome
-    d.rectangle([lx - 24, 462, lx + 24, 472], fill=(24, 28, 54))
-    d.rectangle([lx - 15, 436, lx + 15, 462], fill=(255, 214, 110))
-    d.polygon([(lx - 18, 436), (lx, 414), (lx + 18, 436)], fill=(214, 96, 66))
-    d.ellipse([lx - 4, 406, lx + 4, 414], fill=(255, 214, 110))
-    # light beam fanning left across the dusk sky
-    d.polygon([(lx - 8, 446), (lx + 8, 446), (260, 492), (260, 408)],
-              fill=(255, 226, 140, 46))
-    d.polygon([(lx - 8, 446), (lx + 8, 446), (260, 478), (260, 424)],
-              fill=(255, 226, 140, 64))
-    # lamp glow
-    d.ellipse([lx - 26, 424, lx + 26, 476], fill=(255, 220, 130, 60))
+    d.polygon([(lx - 24, 602), (lx + 24, 602), (lx + 22, 576), (lx - 22, 576)],
+              fill=CORAL)
+    d.polygon([(lx - 20, 542), (lx + 20, 542), (lx + 18, 516), (lx - 18, 516)],
+              fill=CORAL)
+    # Beam sweeping left across the dusk sky, then the lamp room.
+    d.polygon([(lx - 9, 448), (lx + 9, 448), (252, 484), (252, 416)],
+              fill=(255, 226, 140, 44))
+    d.polygon([(lx - 9, 448), (lx + 9, 448), (252, 472), (252, 428)],
+              fill=(255, 226, 140, 62))
+    halo(d, lx, 450, 30, (255, 220, 130), 130)
+    d.rectangle([lx - 25, 460, lx + 25, 472], fill=NIGHT)
+    d.rectangle([lx - 16, 434, lx + 16, 460], fill=(255, 214, 110))
+    d.polygon([(lx - 19, 434), (lx, 412), (lx + 19, 434)], fill=CORAL)
+    d.ellipse([lx - 4, 404, lx + 4, 412], fill=(255, 214, 110))
 
-    # ---- two sailboats with lanterns on the glowing water ----
-    def boat(bx, by, s, hull=(24, 28, 54)):
-        d.polygon([(bx - 34 * s, by), (bx + 34 * s, by), (bx + 22 * s, by + 14 * s),
-                   (bx - 22 * s, by + 14 * s)], fill=hull)
-        d.line([(bx, by), (bx, by - 52 * s)], fill=hull, width=max(2, int(3 * s)))
-        d.polygon([(bx + 3, by - 50 * s), (bx + 3, by - 6 * s), (bx + 34 * s, by - 6 * s)],
-                  fill=(255, 244, 214))
-        d.polygon([(bx - 3, by - 44 * s), (bx - 3, by - 6 * s), (bx - 26 * s, by - 6 * s)],
-                  fill=(244, 200, 160))
-        d.ellipse([bx - 5, by - 20 * s, bx + 5, by - 10 * s], fill=(255, 214, 110))
-        d.ellipse([bx - 9, by - 24 * s, bx + 9, by - 6 * s], fill=(255, 214, 110, 50))
+    # -- Lantern sailboats on the glowing water. --
+    sailboat(d, 326, 698, 1.0)
+    sailboat(d, 644, 788, 0.72)
 
-    boat(330, 700, 1.0)
-    boat(640, 790, 0.72)
+    # -- Pale sand crescent along the bottom. --
+    d.polygon([(0, SIZE), (0, 928), (180, 904), (420, 916), (640, 898),
+               (860, 914), (SIZE, 894), (SIZE, SIZE)], fill=(238, 214, 170))
+    d.polygon([(0, SIZE), (0, 966), (300, 948), (620, 960), (SIZE, 944),
+               (SIZE, SIZE)], fill=(224, 196, 150))
+    for sx2, sy2 in [(706, 938), (764, 954), (296, 946)]:
+        d.ellipse([sx2, sy2, sx2 + 8, sy2 + 6], fill=(255, 255, 255, 95))
 
-    # ---- pale sand crescent, bottom foreground ----
-    d.polygon([(0, 1024), (0, 930), (180, 905), (420, 918), (640, 900),
-               (860, 916), (1024, 896), (1024, 1024)], fill=(238, 214, 170))
-    d.polygon([(0, 1024), (0, 968), (300, 950), (620, 962), (1024, 946), (1024, 1024)],
-              fill=(224, 196, 150))
-    # a few small shells and footprints on the sand
-    for sx2, sy2 in [(700, 940), (760, 956), (300, 948)]:
-        d.ellipse([sx2, sy2, sx2 + 8, sy2 + 6], fill=(255, 255, 255, 90))
+    # -- Vintage double border. --
+    d.rectangle([18, 18, SIZE - 19, SIZE - 19], outline=CREAM, width=3)
+    d.rectangle([30, 30, SIZE - 31, SIZE - 31], outline=CREAM, width=1)
 
-    # ---- vintage double border ----
-    d.rectangle([18, 18, W - 19, H - 19], outline=CREAM, width=3)
-    d.rectangle([30, 30, W - 31, H - 31], outline=CREAM, width=1)
+    # -- Type. --
+    f_name = ImageFont.truetype(FONT_SERIF, 132)
+    f_tag = ImageFont.truetype(FONT_SANS_BOLD, 34)
+    f_foot = ImageFont.truetype(FONT_SANS, 25)
 
-    # ---- type ----
-    f_name = ImageFont.truetype(SERIF_B, 132)
-    f_sub = ImageFont.truetype(SANS_B, 34)
-    f_bot = ImageFont.truetype(SANS, 25)
+    # The name, cream on the dusk sky with a soft dark shadow.
+    centred(d, 512 + 4, 96 + 5, "LUMARIS", f_name, (15, 19, 42, 165), tracking=10)
+    centred(d, 512, 96, "LUMARIS", f_name, CREAM, tracking=10)
 
-    # soft shadow, then the name in cream
-    for dx, dy in [(4, 5)]:
-        text_center(d, 512 + dx, 96 + dy, "LUMARIS", f_name, (16, 20, 44, 160), spacing=10)
-    text_center(d, 512, 96, "LUMARIS", f_name, CREAM, spacing=10)
+    # Subtitle with flanking rules and a centre dot.
+    rule_y = 258
+    d.line([(212, rule_y), (392, rule_y)], fill=CREAM, width=2)
+    d.line([(632, rule_y), (812, rule_y)], fill=CREAM, width=2)
+    d.ellipse([506, rule_y - 4, 518, rule_y + 4], fill=CREAM)
+    centred(d, 512, 268, "THE GLOWING SHORE", f_tag, CREAM, tracking=8)
 
-    # rule lines flanking the subtitle
-    y_rule = 258
-    d.line([(212, y_rule), (392, y_rule)], fill=CREAM, width=2)
-    d.line([(632, y_rule), (812, y_rule)], fill=CREAM, width=2)
-    d.ellipse([506, y_rule - 4, 518, y_rule + 4], fill=CREAM)
-    text_center(d, 512, 268, "THE GLOWING SHORE", f_sub, CREAM, spacing=8)
-
-    # bottom line on the sand, dark ink
-    text_center(d, 512, 952, "WHERE THE SEA LIGHTS THE NIGHT", f_bot, INK, spacing=4)
+    # Bottom line, dark ink on the sand.
+    centred(d, 512, 952, "WHERE THE SEA LIGHTS THE NIGHT", f_foot,
+            NIGHT, tracking=4)
 
     img.save("entry.png", format="PNG", optimize=True)
 
