@@ -1,0 +1,6 @@
+# Generated poster (reproducible via gen_poster.py; its bytes are embedded in main.ts)
+entry.png
+# Local test outputs
+out/
+out1/
+out2/
